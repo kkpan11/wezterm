@@ -82,6 +82,10 @@ impl wezterm_term::TerminalConfiguration for TermConfig {
         self.configuration().enable_title_reporting
     }
 
+    fn enable_checksum_rectangular_area(&self) -> bool {
+        self.configuration().enable_checksum_rectangular_area
+    }
+
     fn enable_kitty_keyboard(&self) -> bool {
         self.configuration().enable_kitty_keyboard
     }
@@ -102,10 +106,7 @@ impl wezterm_term::TerminalConfiguration for TermConfig {
 
     fn unicode_version(&self) -> UnicodeVersion {
         let config = self.configuration();
-        UnicodeVersion {
-            version: config.unicode_version,
-            ambiguous_are_wide: config.treat_east_asian_ambiguous_width_as_wide,
-        }
+        config.unicode_version()
     }
 
     fn debug_key_events(&self) -> bool {

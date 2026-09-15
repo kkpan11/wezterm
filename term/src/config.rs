@@ -1,8 +1,8 @@
 use crate::color::ColorPalette;
 use downcast_rs::{impl_downcast, Downcast};
-use termwiz::cell::UnicodeVersion;
-use termwiz::surface::{Line, SequenceNo};
 use wezterm_bidi::ParagraphDirectionHint;
+use wezterm_cell::UnicodeVersion;
+use wezterm_surface::{Line, SequenceNo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewlineCanon {
@@ -121,7 +121,7 @@ impl Default for NewlineCanon {
             // treats \n as a shortcut that justifies text
             // <https://savannah.gnu.org/bugs/?49176>, we default to
             // \r which is typically fine.
-            // <https://github.com/wez/wezterm/issues/1575>
+            // <https://github.com/wezterm/wezterm/issues/1575>
             Self::CarriageReturn
         }
     }
@@ -191,6 +191,7 @@ pub trait TerminalConfiguration: Downcast + std::fmt::Debug + Send + Sync {
         UnicodeVersion {
             version: 9,
             ambiguous_are_wide: false,
+            cell_widths: None,
         }
     }
 
@@ -216,6 +217,10 @@ pub trait TerminalConfiguration: Downcast + std::fmt::Debug + Send + Sync {
     /// Disabled by default per:
     /// <https://marc.info/?l=bugtraq&m=104612710031920&w=2>
     fn enable_title_reporting(&self) -> bool {
+        false
+    }
+
+    fn enable_checksum_rectangular_area(&self) -> bool {
         false
     }
 

@@ -19,6 +19,7 @@ The `PaneInformation` struct contains the following fields:
 * `pixel_height` - the height of the pane in pixels
 * `title` - the title of the pane, per [pane:get_title()](pane/get_title.md) at the time the pane information was captured
 * `user_vars` - the user variables defined for the pane, per [pane:get_user_vars()](pane/get_user_vars.md) at the time the pane information was captured.
+* `progress` - the progress state, per [pane:get_progress()](pane/get_progress.md) at the time the pane information was captured. {{since('nightly', inline=True)}}
 
 {{since('20220101-133340-7edc5b5a')}}
 
@@ -65,7 +66,7 @@ return {}
 
 {{since('20220319-142410-0fcdea07')}}
 
-The `has_unseen_output` field returns true if the there has been output
+The `has_unseen_output` field returns true if there has been output
 in the pane since the last time it was focused.
 
 This example shows how to use this event to change the color of the

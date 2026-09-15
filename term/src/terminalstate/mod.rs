@@ -1,6 +1,7 @@
 // The range_plus_one lint can't see when the LHS is not compatible with
 // and inclusive range
 #![allow(clippy::range_plus_one)]
+
 use super::*;
 use crate::color::{ColorPalette, RgbColor};
 use crate::config::{BidiMode, NewlineCanon};
@@ -12,18 +13,18 @@ use std::num::NonZeroUsize;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use terminfo::{Database, Value};
-use termwiz::cell::UnicodeVersion;
-use termwiz::escape::csi::{
+use termwiz::input::KeyboardEncoding;
+use url::Url;
+use wezterm_bidi::ParagraphDirectionHint;
+use wezterm_cell::image::ImageData;
+use wezterm_cell::UnicodeVersion;
+use wezterm_escape_parser::csi::{
     Cursor, CursorStyle, DecPrivateMode, DecPrivateModeCode, Device, Edit, EraseInDisplay,
     EraseInLine, Mode, Sgr, TabulationClear, TerminalMode, TerminalModeCode, Window, XtSmGraphics,
     XtSmGraphicsAction, XtSmGraphicsItem, XtSmGraphicsStatus, XtermKeyModifierResource,
 };
-use termwiz::escape::{OneBased, OperatingSystemCommand, CSI};
-use termwiz::image::ImageData;
-use termwiz::input::KeyboardEncoding;
-use termwiz::surface::{CursorShape, CursorVisibility, SequenceNo};
-use url::Url;
-use wezterm_bidi::ParagraphDirectionHint;
+use wezterm_escape_parser::{OneBased, OperatingSystemCommand, CSI};
+use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo};
 
 mod image;
 mod iterm;
@@ -42,20 +43,27 @@ lazy_static::lazy_static! {
     };
 }
 
+/// Tracks the horizontal tab stops for a terminal screen.
+/// Tab stops are stored as a boolean vector, one entry per column.
 pub(crate) struct TabStop {
     tabs: Vec<bool>,
     tab_width: usize,
 }
 
+/// A character set selectable through the DEC SCS escape sequences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CharSet {
+pub enum CharSet {
+    /// The US ASCII character set (`B`).
     Ascii,
+    /// The United Kingdom character set (`A`).
     Uk,
+    /// DEC Special Graphics / line drawing (`0`).
     DecLineDrawing,
 }
 
+/// The mouse reporting encoding negotiated through DEC private mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MouseEncoding {
+pub enum MouseEncoding {
     X10,
     Utf8,
     SGR,
@@ -131,7 +139,7 @@ impl TabStop {
 }
 
 #[derive(Debug, Clone)]
-struct SavedCursor {
+pub(crate) struct SavedCursor {
     position: CursorPosition,
     wrap_next: bool,
     pen: CellAttributes,
@@ -148,8 +156,6 @@ struct ScreenOrAlt {
     alt_screen: Screen,
     /// Tells us which screen is active
     alt_screen_is_active: bool,
-    saved_cursor: Option<SavedCursor>,
-    alt_saved_cursor: Option<SavedCursor>,
 }
 
 impl Deref for ScreenOrAlt {
@@ -188,8 +194,6 @@ impl ScreenOrAlt {
             screen,
             alt_screen,
             alt_screen_is_active: false,
-            saved_cursor: None,
-            alt_saved_cursor: None,
         }
     }
 
@@ -235,9 +239,9 @@ impl ScreenOrAlt {
 
     pub fn saved_cursor(&mut self) -> &mut Option<SavedCursor> {
         if self.alt_screen_is_active {
-            &mut self.alt_saved_cursor
+            &mut self.alt_screen.saved_cursor
         } else {
-            &mut self.saved_cursor
+            &mut self.screen.saved_cursor
         }
     }
 
@@ -268,6 +272,9 @@ pub struct TerminalState {
     /// If true, writing a character inserts a new cell
     insert: bool,
 
+    /// When set, received chars auto-wrap to the next line when the cursor reaches the right border.
+    /// Otherwise received chars continuously replace the last char on the right.
+    /// note: This is set by default, because it's more useful this way.
     /// https://vt100.net/docs/vt510-rm/DECAWM.html
     dec_auto_wrap: bool,
 
@@ -285,6 +292,9 @@ pub struct TerminalState {
 
     /// The scroll region
     top_and_bottom_margins: Range<VisibleRowIndex>,
+    /// The inner horizontal region between DECSLRM left/right margins.
+    /// `start` is the left margin column, `end` is one past the right margin column.
+    /// Only effective when `left_and_right_margin_mode` is enabled.
     left_and_right_margins: Range<usize>,
     left_and_right_margin_mode: bool,
 
@@ -339,6 +349,7 @@ pub struct TerminalState {
     title: String,
     /// The icon title string (OSC 1)
     icon_title: Option<String>,
+    progress: Progress,
 
     palette: Option<ColorPalette>,
 
@@ -583,6 +594,7 @@ impl TerminalState {
             focused: true,
             bidi_enabled: None,
             bidi_hint: None,
+            progress: Progress::default(),
         }
     }
 
@@ -642,6 +654,10 @@ impl TerminalState {
     /// if it is set, otherwise return the OSC 2 window title.
     pub fn get_title(&self) -> &str {
         self.icon_title.as_ref().unwrap_or(&self.title)
+    }
+
+    pub fn get_progress(&self) -> Progress {
+        self.progress.clone()
     }
 
     /// Returns the current working directory associated with the
@@ -750,8 +766,114 @@ impl TerminalState {
         self.mouse_tracking || self.button_event_mouse || self.any_event_mouse
     }
 
+    /// Returns true if the alternate screen (secondary screen buffer) is currently active.
+    /// This is useful for the hosting GUI application to decide how best
+    /// to handle operations like scrollback that only apply to the primary screen.
     pub fn is_alt_screen_active(&self) -> bool {
         self.screen.is_alt_screen_active()
+    }
+
+    /// Returns true if the associated application has enabled basic mouse
+    /// tracking mode (DEC mode 1000).
+    /// This is useful for the hosting GUI application to decide how best
+    /// to dispatch mouse events to the terminal.
+    pub fn mouse_tracking_enabled(&self) -> bool {
+        self.mouse_tracking
+    }
+
+    /// Returns true if the associated application has enabled button-event mouse
+    /// tracking mode (DEC mode 1002), which reports motion events while a button is held.
+    /// This is useful for the hosting GUI application to decide how best
+    /// to dispatch mouse events to the terminal.
+    pub fn button_event_mouse_enabled(&self) -> bool {
+        self.button_event_mouse
+    }
+
+    /// Returns true if the associated application has enabled any-event mouse
+    /// tracking mode (DEC mode 1003), which reports all motion events regardless of button state.
+    /// This is useful for the hosting GUI application to decide how best
+    /// to dispatch mouse events to the terminal.
+    pub fn any_event_mouse_enabled(&self) -> bool {
+        self.any_event_mouse
+    }
+
+    /// Returns the current mouse reporting encoding selected by the associated application.
+    pub fn get_mouse_encoding(&self) -> MouseEncoding {
+        self.mouse_encoding
+    }
+
+    /// Returns true if the associated application has enabled focus tracking mode
+    /// (DEC mode 1004), which causes focus-in and focus-out events to be reported.
+    pub fn focus_tracking_enabled(&self) -> bool {
+        self.focus_tracking
+    }
+
+    /// Returns true if the associated application has enabled application cursor keys mode
+    /// (DEC mode 1), which causes cursor keys to send application sequences instead of ANSI ones.
+    pub fn application_cursor_keys_enabled(&self) -> bool {
+        self.application_cursor_keys
+    }
+
+    /// Returns true if the associated application has enabled the special encoding of the numeric
+    /// keypad portion of the keyboard.
+    pub fn application_keypad_enabled(&self) -> bool {
+        self.application_keypad
+    }
+
+    /// Returns true if DECAWM auto-wrap mode (DEC mode 7) is enabled, which causes
+    /// cursor to wrap to next line when it reaches right border.
+    pub fn dec_auto_wrap_enabled(&self) -> bool {
+        self.dec_auto_wrap
+    }
+
+    /// The DECSTBM scroll region, as inclusive-start/exclusive-end visible rows.
+    pub fn get_top_and_bottom_margins(&self) -> Range<VisibleRowIndex> {
+        self.top_and_bottom_margins.clone()
+    }
+
+    /// Returns true if DEC left/right margin mode (DECLRMM) is enabled.
+    /// Use [`Self::get_left_and_right_margins`] to get those margin values.
+    pub fn left_and_right_margin_mode_enabled(&self) -> bool {
+        self.left_and_right_margin_mode
+    }
+
+    /// The inner horizontal region between the DECSLRM margins.
+    /// `start` is the left margin column, `end` is one past the right margin column.
+    /// Only effective when [`Self::left_and_right_margin_mode_enabled`] is true.
+    pub fn get_left_and_right_margins(&self) -> Range<usize> {
+        self.left_and_right_margins.clone()
+    }
+
+    /// Returns true if DEC origin mode (DECOM) is enabled.
+    pub fn dec_origin_mode_enabled(&self) -> bool {
+        self.dec_origin_mode
+    }
+
+    /// Returns true if insert mode (IRM) is enabled.
+    pub fn insert_mode_enabled(&self) -> bool {
+        self.insert
+    }
+
+    /// Returns true if shift-out is enabled: G1 charset is active for display.
+    /// Reset by shift-in, which restores G0 charset.
+    pub fn shift_out_enabled(&self) -> bool {
+        self.shift_out
+    }
+
+    /// The Character Set Selection (SCS) charset designated for G0.
+    pub fn g0_charset(&self) -> CharSet {
+        self.g0_charset
+    }
+
+    /// The Character Set Selection (SCS) charset designated for G1.
+    pub fn g1_charset(&self) -> CharSet {
+        self.g1_charset
+    }
+
+    /// Tab stops by column: `true` where a stop is set.
+    /// Length tracks the screen width, so index is the column.
+    pub fn tab_stops_by_column(&self) -> Vec<bool> {
+        self.tabs.tabs.clone()
     }
 
     /// Returns true if the associated application has enabled
@@ -852,6 +974,7 @@ impl TerminalState {
         let (cursor_main, cursor_alt) = if self.screen.alt_screen_is_active {
             (
                 self.screen
+                    .screen
                     .saved_cursor
                     .as_ref()
                     .map(|s| s.position)
@@ -862,7 +985,8 @@ impl TerminalState {
             (
                 self.cursor,
                 self.screen
-                    .alt_saved_cursor
+                    .alt_screen
+                    .saved_cursor
                     .as_ref()
                     .map(|s| s.position)
                     .unwrap_or_else(CursorPosition::default),
@@ -889,7 +1013,7 @@ impl TerminalState {
                 &Position::Absolute(adjusted_cursor_alt.y),
             );
 
-            if let Some(saved) = self.screen.saved_cursor.as_mut() {
+            if let Some(saved) = self.screen.screen.saved_cursor.as_mut() {
                 saved.position.x = adjusted_cursor_main.x;
                 saved.position.y = adjusted_cursor_main.y;
                 saved.position.seqno = self.seqno;
@@ -900,7 +1024,7 @@ impl TerminalState {
                 &Position::Absolute(adjusted_cursor_main.x as i64),
                 &Position::Absolute(adjusted_cursor_main.y),
             );
-            if let Some(saved) = self.screen.alt_saved_cursor.as_mut() {
+            if let Some(saved) = self.screen.alt_screen.saved_cursor.as_mut() {
                 saved.position.x = adjusted_cursor_alt.x;
                 saved.position.y = adjusted_cursor_alt.y;
                 saved.position.seqno = self.seqno;
@@ -1286,6 +1410,7 @@ impl TerminalState {
                 ident.push_str(";6"); // Selective erase
                 ident.push_str(";18"); // windowing extensions
                 ident.push_str(";22"); // ANSI color, vt525
+                ident.push_str(";52"); // Clipboard access
                 ident.push('c');
 
                 self.writer.write(ident.as_bytes()).ok();
@@ -2007,7 +2132,7 @@ impl TerminalState {
         // The concept of uninitialized cells in wezterm is not the same as that on VT520 or that
         // on xterm, so, to prevent a lot of noise in esctest, treat them as spaces, at least when
         // asking for the checksum of a single cell (which is what esctest does).
-        // See: https://github.com/wez/wezterm/pull/4565
+        // See: https://github.com/wezterm/wezterm/pull/4565
         if checksum == 0 {
             32u16
         } else {
@@ -2068,14 +2193,16 @@ impl TerminalState {
                 right,
                 ..
             } => {
-                let checksum = self.checksum_rectangle(
-                    left.as_zero_based(),
-                    top.as_zero_based(),
-                    right.as_zero_based(),
-                    bottom.as_zero_based(),
-                );
-                write!(self.writer, "\x1bP{}!~{:04x}\x1b\\", request_id, checksum).ok();
-                self.writer.flush().ok();
+                if self.config.enable_checksum_rectangular_area() {
+                    let checksum = self.checksum_rectangle(
+                        left.as_zero_based(),
+                        top.as_zero_based(),
+                        right.as_zero_based(),
+                        bottom.as_zero_based(),
+                    );
+                    write!(self.writer, "\x1bP{}!~{:04x}\x1b\\", request_id, checksum).ok();
+                    self.writer.flush().ok();
+                }
             }
             Window::ResizeWindowCells { .. } => {
                 // We don't allow the application to change the window size; that's
@@ -2202,7 +2329,7 @@ impl TerminalState {
                     // the logic for updating the cursor position, it causes regressions
                     // in the test suite.
                     // So this is here for now until a better solution is found.
-                    // <https://github.com/wez/wezterm/issues/3548>
+                    // <https://github.com/wezterm/wezterm/issues/3548>
                     EraseInLine::EraseToEndOfLine => cx + if self.wrap_next { 1 } else { 0 }..cols,
                     EraseInLine::EraseToStartOfLine => 0..cx + 1,
                     EraseInLine::EraseLine => 0..cols,

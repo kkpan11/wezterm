@@ -22,10 +22,10 @@ use crate::unix::UnixDomain;
 use crate::wsl::WslDomain;
 use crate::{
     default_config_with_overrides_applied, default_one_point_oh, default_one_point_oh_f64,
-    default_true, default_win32_acrylic_accent_color, GpuInfo, IntegratedTitleButtonColor,
-    KeyMapPreference, LoadedConfig, MouseEventTriggerMods, RgbaColor, SerialDomain, SystemBackdrop,
-    WebGpuPowerPreference, CONFIG_DIRS, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP,
-    HOME_DIR,
+    default_true, default_win32_acrylic_accent_color, CellWidth, GpuInfo,
+    IntegratedTitleButtonColor, KeyMapPreference, LoadedConfig, MouseEventTriggerMods, RgbaColor,
+    SerialDomain, SystemBackdrop, WebGpuPowerPreference, CONFIG_DIRS, CONFIG_FILE_OVERRIDE,
+    CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
 };
 use anyhow::Context;
 use luahelper::impl_lua_conversion_dynamic;
@@ -142,6 +142,10 @@ pub struct Config {
     #[dynamic(default)]
     pub window_frame: WindowFrameConfig,
 
+    /// Font to use for CharSelect
+    #[dynamic(default)]
+    pub char_select_font: Option<TextStyle>,
+
     #[dynamic(default = "default_char_select_font_size")]
     pub char_select_font_size: f64,
 
@@ -151,8 +155,18 @@ pub struct Config {
     #[dynamic(default = "default_char_select_bg_color")]
     pub char_select_bg_color: RgbaColor,
 
+    /// Font to use for ActivateCommandPalette
+    #[dynamic(default)]
+    pub command_palette_font: Option<TextStyle>,
+
     #[dynamic(default = "default_command_palette_font_size")]
     pub command_palette_font_size: f64,
+
+    #[dynamic(
+        default = "default_one_point_oh_f64",
+        validate = "validate_line_height"
+    )]
+    pub command_palette_line_height: f64,
 
     pub command_palette_rows: Option<usize>,
     #[dynamic(default = "default_command_palette_fg_color")]
@@ -160,6 +174,10 @@ pub struct Config {
 
     #[dynamic(default = "default_command_palette_bg_color")]
     pub command_palette_bg_color: RgbaColor,
+
+    /// Font to use for PaneSelect
+    #[dynamic(default)]
+    pub pane_select_font: Option<TextStyle>,
 
     #[dynamic(default = "default_pane_select_font_size")]
     pub pane_select_font_size: f64,
@@ -247,6 +265,12 @@ pub struct Config {
     /// <https://marc.info/?l=bugtraq&m=104612710031920&w=2>
     #[dynamic(default)]
     pub enable_title_reporting: bool,
+
+    /// Whether the terminal should respond to DECRQCRA checksum requests.
+    /// Disabled by default as it allows programs to read screen contents.
+    /// <https://vt100.net/docs/vt510-rm/DECRQCRA.html>
+    #[dynamic(default)]
+    pub enable_checksum_rectangular_area: bool,
 
     /// Specifies the width of a new window, expressed in character cells
     #[dynamic(default = "default_initial_cols", validate = "validate_row_or_col")]
@@ -414,12 +438,17 @@ pub struct Config {
     pub disable_default_key_bindings: bool,
     pub leader: Option<LeaderKey>,
 
+    #[dynamic(default = "default_num_alphabet")]
+    pub launcher_alphabet: String,
+
     #[dynamic(default)]
     pub disable_default_quick_select_patterns: bool,
     #[dynamic(default)]
     pub quick_select_patterns: Vec<String>,
     #[dynamic(default = "default_alphabet")]
     pub quick_select_alphabet: String,
+    #[dynamic(default)]
+    pub quick_select_remove_styling: bool,
 
     #[dynamic(default)]
     pub mouse_bindings: Vec<Mouse>,
@@ -521,6 +550,9 @@ pub struct Config {
     #[dynamic(default)]
     pub window_padding: WindowPadding,
 
+    #[dynamic(default)]
+    pub window_content_alignment: WindowContentAlignment,
+
     /// Specifies the path to a background image attachment file.
     /// The file can be any image format that the rust `image`
     /// crate is able to identify and load.
@@ -543,6 +575,17 @@ pub struct Config {
     /// Only works on MacOS
     #[dynamic(default)]
     pub macos_window_background_blur: i64,
+
+    /// Only works on KDE Wayland
+    #[dynamic(
+        default,
+        deprecated = "this option has been replaced with `wayland_window_background_blur` and will be removed in a future release"
+    )]
+    pub kde_window_background_blur: bool,
+
+    /// Only works on Wayland compositors that support ext-background-effect-v1 protocol
+    #[dynamic(default)]
+    pub wayland_window_background_blur: bool,
 
     /// Only works on Windows
     #[dynamic(default)]
@@ -616,7 +659,12 @@ pub struct Config {
     pub animation_fps: u8,
 
     #[dynamic(default)]
+    pub text_min_contrast_ratio: Option<f32>,
+
+    #[dynamic(default)]
     pub force_reverse_video_cursor: bool,
+    #[dynamic(default = "default_reverse_video_cursor_min_contrast")]
+    pub reverse_video_cursor_min_contrast: f32,
 
     /// Specifies the default cursor style.  various escape sequences
     /// can override the default style in different situations (eg:
@@ -721,6 +769,9 @@ pub struct Config {
     #[dynamic(default)]
     pub native_macos_fullscreen_mode: bool,
 
+    #[dynamic(default)]
+    pub macos_fullscreen_extend_behind_notch: bool,
+
     #[dynamic(default = "default_word_boundary")]
     pub selection_word_boundary: String,
 
@@ -785,7 +836,7 @@ pub struct Config {
     pub unzoom_on_switch_pane: bool,
 
     #[dynamic(default = "default_max_fps")]
-    pub max_fps: u8,
+    pub max_fps: u64,
 
     #[dynamic(default = "default_shape_cache_size")]
     pub shape_cache_size: usize,
@@ -812,6 +863,9 @@ pub struct Config {
 
     #[dynamic(default)]
     pub treat_east_asian_ambiguous_width_as_wide: bool,
+
+    #[dynamic(default)]
+    pub cell_widths: Option<Vec<CellWidth>>,
 
     #[dynamic(default = "default_true")]
     pub allow_download_protocols: bool,
@@ -1503,16 +1557,27 @@ impl Config {
             }
         };
 
-        self.apply_cmd_defaults(&mut cmd, default_cwd);
+        self.apply_cmd_defaults(&mut cmd, None, default_cwd);
 
         Ok(cmd)
     }
 
-    pub fn apply_cmd_defaults(&self, cmd: &mut CommandBuilder, default_cwd: Option<&PathBuf>) {
+    pub fn apply_cmd_defaults(
+        &self,
+        cmd: &mut CommandBuilder,
+        default_prog: Option<&Vec<String>>,
+        default_cwd: Option<&PathBuf>,
+    ) {
         // Apply `default_cwd` only if `cwd` is not already set, allows `--cwd`
         // option to take precedence
         if let (None, Some(cwd)) = (cmd.get_cwd(), default_cwd) {
             cmd.cwd(cwd);
+        }
+
+        if let Some(default_prog) = default_prog {
+            if cmd.is_default_prog() {
+                cmd.replace_default_prog(default_prog);
+            }
         }
 
         // Augment WSLENV so that TERM related environment propagates
@@ -1633,7 +1698,7 @@ fn default_text_blink_rate_rapid() -> u64 {
 
 fn default_swap_backspace_and_delete() -> bool {
     // cfg!(target_os = "macos")
-    // See: https://github.com/wez/wezterm/issues/88
+    // See: https://github.com/wezterm/wezterm/issues/88
     false
 }
 
@@ -1666,9 +1731,11 @@ pub fn default_hyperlink_rules() -> Vec<hyperlink::Rule> {
         hyperlink::Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1).unwrap(),
         hyperlink::Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1).unwrap(),
         hyperlink::Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1).unwrap(),
-        // Then handle URLs not wrapped in brackets
-        // and include terminating ), / or - characters, if any
-        hyperlink::Rule::new(r"\b\w+://\S+[)/a-zA-Z0-9-]+", "$0").unwrap(),
+        // Then handle URLs not wrapped in brackets that
+        // 1) have a balanced ending parenthesis or
+        hyperlink::Rule::new(hyperlink::CLOSING_PARENTHESIS_HYPERLINK_PATTERN, "$0").unwrap(),
+        // 2) include terminating _, / or - characters, if any
+        hyperlink::Rule::new(hyperlink::GENERIC_HYPERLINK_PATTERN, "$0").unwrap(),
         // implicit mailto link
         hyperlink::Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0").unwrap(),
     ]
@@ -1754,7 +1821,7 @@ fn default_anim_fps() -> u8 {
     10
 }
 
-fn default_max_fps() -> u8 {
+fn default_max_fps() -> u64 {
     60
 }
 
@@ -1766,6 +1833,7 @@ fn default_tiling_desktop_environments() -> Vec<String> {
         "X11 bspwm",
         "X11 dwm",
         "X11 i3",
+        "X11 xmonad",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -1796,6 +1864,11 @@ fn default_status_update_interval() -> u64 {
 
 fn default_alternate_buffer_wheel_scroll_speed() -> u8 {
     3
+}
+
+fn default_num_alphabet() -> String {
+    // Note: vi motion keys are intentionally excluded from this alphabet
+    "1234567890abcdefghilmnopqrstuvwxyz".to_string()
 }
 
 fn default_alphabet() -> String {
@@ -1873,6 +1946,10 @@ const fn default_half_cell() -> Dimension {
     Dimension::Cells(0.5)
 }
 
+const fn default_reverse_video_cursor_min_contrast() -> f32 {
+    2.5
+}
+
 #[derive(FromDynamic, ToDynamic, Clone, Copy, Debug)]
 pub struct WindowPadding {
     #[dynamic(try_from = "crate::units::PixelUnit", default = "default_one_cell")]
@@ -1894,6 +1971,28 @@ impl Default for WindowPadding {
             bottom: default_half_cell(),
         }
     }
+}
+
+#[derive(FromDynamic, ToDynamic, Clone, Copy, Debug, Default)]
+pub struct WindowContentAlignment {
+    pub horizontal: HorizontalWindowContentAlignment,
+    pub vertical: VerticalWindowContentAlignment,
+}
+
+#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HorizontalWindowContentAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VerticalWindowContentAlignment {
+    #[default]
+    Top,
+    Center,
+    Bottom,
 }
 
 #[derive(FromDynamic, ToDynamic, Clone, Copy, Debug, PartialEq, Eq)]
@@ -2084,7 +2183,7 @@ fn validate_row_or_col(value: &u16) -> Result<(), String> {
 fn validate_line_height(value: &f64) -> Result<(), String> {
     if *value <= 0.0 {
         Err(format!(
-            "Illegal value {value} for line_height; it must be positive and greater than zero!"
+            "Illegal value {value}; it must be positive and greater than zero!"
         ))
     } else {
         Ok(())
@@ -2103,9 +2202,9 @@ pub(crate) fn validate_domain_name(name: &str) -> Result<(), String> {
     }
 }
 
-/// <https://github.com/wez/wezterm/pull/2435>
-/// <https://github.com/wez/wezterm/issues/2771>
-/// <https://github.com/wez/wezterm/issues/2630>
+/// <https://github.com/wezterm/wezterm/pull/2435>
+/// <https://github.com/wezterm/wezterm/issues/2771>
+/// <https://github.com/wezterm/wezterm/issues/2630>
 fn default_macos_forward_mods() -> Modifiers {
     Modifiers::SHIFT
 }

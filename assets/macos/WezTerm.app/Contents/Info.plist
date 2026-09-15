@@ -52,6 +52,8 @@
 	<string>An application launched via WezTerm would like to access your location information while active.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>An application launched via WezTerm would like to access your microphone.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>An application launched via WezTerm would like to use speech recognition.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>An application launched via WezTerm would like to access your reminders.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
@@ -60,6 +62,8 @@
 	<string>An application launched via WezTerm would like to access your Downloads folder.</string>
 	<key>NSSystemAdministrationUsageDescription</key>
 	<string>An application launched via WezTerm requires elevated permission.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>An application launched via WezTerm would like to access the local network.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

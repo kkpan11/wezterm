@@ -25,7 +25,7 @@ The value is a set of flags:
     * `MACOS_FORCE_ENABLE_SHADOW` - enable the window shadow effect.
 
     The window shadow effect is normally disabled by wezterm when the
-    [window_background_opacity](../../appearance.md#window-background-opacity) is set
+    [window_background_opacity](window_background_opacity.md) is set
     to less than `1.0`.
 
 {{since('20230408-112425-69ae8472', outline=true)}}
@@ -38,6 +38,17 @@ The value is a set of flags:
       [integrated_title_button_alignment](integrated_title_button_alignment.md)
       [integrated_title_button_color](integrated_title_button_color.md) and,
       if you are using the retro tab bar, [tab_bar_style](tab_bar_style.md).
+
+{{since('nightly', outline=true)}}
+    The following flags are also supported:
+
+    * `MACOS_FORCE_SQUARE_CORNERS` - on macOS, force the window to have square
+      rather than rounded corners. It is not compatible with `TITLE` or
+      `INTEGRATED_BUTTONS`
+    * `MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR` - on macOS, change the
+      system titlebar background color to match the terminal background color
+      defined by your configuration.  This option doesn't make sense to use
+      without also including `TITLE|RESIZE` in the set of decorations.
 
 On X11 and Wayland, the windowing system may override the window decorations.
 

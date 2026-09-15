@@ -217,7 +217,7 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 '--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
 '--start-line=[The starting line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value is unspecified is 0, the first line of the terminal screen]:START_LINE: ' \
-'--end-line=[The ending line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value if unspecified is the bottom of the the terminal screen]:END_LINE: ' \
+'--end-line=[The ending line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value if unspecified is the bottom of the terminal screen]:END_LINE: ' \
 '--escapes[Include escape sequences that color and style the text. If omitted, unattributed text will be returned]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -422,7 +422,7 @@ _arguments "${_arguments_options[@]}" \
 '--resize=[Pre-process the image to resize it to the specified dimensions, expressed as eg\: 800x600 (width x height). The resize is independent of other parameters that control the image placement and dimensions in the terminal; this is provided as a convenience preprocessing step]:WIDTHxHEIGHT: ' \
 '--no-preserve-aspect-ratio[Do not respect the aspect ratio.  The default is to respect the aspect ratio]' \
 '--no-move-cursor[Do not move the cursor after displaying the image. Note that when used like this from the shell, there is a very high chance that shell prompt will overwrite the image; you may wish to also use \`--hold\` in that case]' \
-'--hold[Wait for enter to be pressed after displaying the image]' \
+'--hold[Wait for enter/escape/ctrl-c/ctrl-d to be pressed after displaying the image]' \
 '--no-resample[Do not resample images whose frames are larger than the max-pixels value. Note that this will typically result in the image refusing to display in wezterm]' \
 '--show-resample-timing[When resampling or resizing, display some diagnostics around the timing/performance of that operation]' \
 '-h[Print help (see more with '\''--help'\'')]' \

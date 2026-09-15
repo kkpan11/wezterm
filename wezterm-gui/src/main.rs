@@ -23,7 +23,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use termwiz::cell::{CellAttributes, UnicodeVersion};
+use termwiz::cell::CellAttributes;
 use termwiz::surface::{Line, SEQ_ZERO};
 use unicode_normalization::UnicodeNormalization;
 use wezterm_bidi::Direction;
@@ -67,7 +67,7 @@ pub use termwindow::{set_window_class, set_window_position, TermWindow, ICON_DAT
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "Wez's Terminal Emulator\nhttp://github.com/wez/wezterm",
+    about = "Wez's Terminal Emulator\nhttp://github.com/wezterm/wezterm",
     version = config::wezterm_version()
 )]
 struct Opt {
@@ -139,7 +139,7 @@ async fn async_run_ssh(opts: SshCommand) -> anyhow::Result<()> {
         ssh_option.insert("wezterm_ssh_verbose".to_string(), "true".to_string());
     }
     for (k, v) in opts.config_override {
-        ssh_option.insert(k.to_lowercase().to_string(), v);
+        ssh_option.insert(k.to_ascii_lowercase(), v);
     }
 
     let dom = SshDomain {
@@ -266,7 +266,7 @@ fn have_panes_in_domain_and_ws(domain: &Arc<dyn Domain>, workspace: &Option<Stri
     if let Some(ws) = &workspace {
         for window_id in mux.iter_windows_in_workspace(ws) {
             if let Some(win) = mux.get_window(window_id) {
-                for t in win.iter() {
+                for t in win.iter_tabs() {
                     for p in t.iter_panes_ignoring_zoom() {
                         if p.pane.domain_id() == domain.domain_id() {
                             return true;
@@ -483,8 +483,8 @@ async fn async_run_terminal_gui(
             let mut window = mux
                 .get_window_mut(window_id)
                 .ok_or_else(|| anyhow!("failed to get mux window id {window_id}"))?;
-            if let Some(tab_idx) = window.idx_by_id(tab.tab_id()) {
-                window.set_active_without_saving(tab_idx);
+            if let Some(tab_idx) = window.get_tab_idx_for_id(tab.tab_id()) {
+                window.set_active_tab_idx_without_saving(tab_idx);
             }
             trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
         }
@@ -883,10 +883,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
         None
     };
 
-    let unicode_version = UnicodeVersion {
-        version: config.unicode_version,
-        ambiguous_are_wide: config.treat_east_asian_ambiguous_width_as_wide,
-    };
+    let unicode_version = config.unicode_version();
 
     let text = match (&cmd.text, &cmd.codepoints) {
         (Some(text), _) => Some(text.to_string()),
@@ -916,7 +913,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
             &text,
             &CellAttributes::default(),
             SEQ_ZERO,
-            Some(unicode_version),
+            Some(&unicode_version),
         );
         let cell_clusters = line.cluster(bidi_hint);
         let ft_lib = wezterm_font::ftwrap::Library::new()?;

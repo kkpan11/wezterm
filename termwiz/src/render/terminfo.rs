@@ -4,8 +4,11 @@ use crate::cell::{AttributeChange, Blink, CellAttributes, Intensity, Underline};
 use crate::color::{ColorAttribute, ColorSpec};
 use crate::escape::csi::{Cursor, Edit, EraseInDisplay, EraseInLine, Sgr, CSI};
 use crate::escape::esc::EscCode;
-use crate::escape::osc::{ITermDimension, ITermFileData, ITermProprietary, OperatingSystemCommand};
+use crate::escape::osc::OperatingSystemCommand;
+#[cfg(feature = "use_image")]
+use crate::escape::osc::{ITermDimension, ITermFileData, ITermProprietary};
 use crate::escape::{Esc, OneBased};
+#[cfg(feature = "use_image")]
 use crate::image::{ImageDataType, TextureCoordinate};
 use crate::render::RenderTty;
 use crate::surface::{Change, CursorShape, CursorVisibility, LineAttribute, Position};
@@ -382,6 +385,19 @@ impl TerminfoRenderer {
                         out.write_all(buf.as_slice())?;
                     }
                 }
+                Change::ClearLine(color) => {
+                    let defaults = CellAttributes::default().set_background(*color).clone();
+                    if self.current_attr != defaults {
+                        self.pending_attr = Some(defaults);
+                        self.flush_pending_attr(out)?;
+                    }
+                    self.pending_attr = None;
+                    write!(
+                        out,
+                        "{}",
+                        CSI::Edit(Edit::EraseInLine(EraseInLine::EraseLine))
+                    )?;
+                }
                 Change::ClearToEndOfLine(color) => {
                     // ClearScreen implicitly resets all to default
                     let defaults = CellAttributes::default().set_background(*color).clone();
@@ -580,6 +596,7 @@ impl TerminfoRenderer {
                         }
                     }
                 },
+                #[cfg(feature = "use_image")]
                 Change::Image(image) => {
                     if self.caps.iterm2_image() {
                         let data = if image.top_left == TextureCoordinate::new_f32(0.0, 0.0)
@@ -1006,6 +1023,27 @@ mod test {
         );
 
         assert_eq!(out.renderer.current_attr, CellAttributes::default());
+    }
+
+    #[test]
+    fn clear_line() {
+        let mut out = FakeTerm::new(xterm_terminfo());
+        out.render(&[Change::ClearLine(AnsiColor::Maroon.into())])
+            .unwrap();
+
+        assert_eq!(
+            out.parse(),
+            vec![
+                Action::CSI(CSI::Sgr(Sgr::Background(AnsiColor::Maroon.into()))),
+                Action::CSI(CSI::Edit(Edit::EraseInLine(EraseInLine::EraseLine))),
+            ]
+        );
+        assert_eq!(
+            out.renderer.current_attr,
+            CellAttributes::default()
+                .set_background(AnsiColor::Maroon)
+                .clone()
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ use termwiz::surface::{SequenceNo, SEQ_ZERO};
 use url::Url;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
-    Clipboard, KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, TerminalSize,
+    Clipboard, Intensity, KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex, TerminalSize,
 };
 use window::WindowOps;
 
@@ -125,6 +125,11 @@ fn compute_labels_for_alphabet_impl(
         .collect()
 }
 
+/// Returns true if a label should be displayed given a selection prefix.
+fn label_matches_selection(label: &str, lowered_prefix: &str) -> bool {
+    lowered_prefix.is_empty() || label.starts_with(lowered_prefix)
+}
+
 #[cfg(test)]
 mod alphabet_test {
     use super::*;
@@ -190,6 +195,62 @@ mod alphabet_test {
             compute_labels_for_alphabet_with_preserved_case("abc123", 12),
             compute_labels_for_alphabet("abc123", 12)
         );
+    }
+}
+
+#[cfg(test)]
+mod label_filter_test {
+    use super::*;
+
+    #[test]
+    fn empty_prefix_matches_all() {
+        let labels = ["a", "fq", "db", "av", "ac"];
+        assert!(labels.iter().all(|l| label_matches_selection(l, "")));
+    }
+
+    #[test]
+    fn single_char_prefix_filters_non_matching() {
+        // Pressing 'a' should keep labels starting with 'a' and remove others
+        let labels = ["ai", "fq", "db", "av", "ac"];
+        let visible: Vec<&str> = labels
+            .iter()
+            .copied()
+            .filter(|l| label_matches_selection(l, "a"))
+            .collect();
+        assert_eq!(visible, ["ai", "av", "ac"]);
+    }
+
+    #[test]
+    fn full_prefix_matches_exact_label() {
+        assert!(label_matches_selection("ai", "ai"));
+        assert!(!label_matches_selection("ac", "ai"));
+    }
+
+    #[test]
+    fn prefix_longer_than_label() {
+        assert!(!label_matches_selection("a", "ab"));
+        assert!(!label_matches_selection("", "a"));
+    }
+
+    #[test]
+    fn two_char_labels_narrowed_by_first_char() {
+        // With more matches than alphabet, two-char labels are generated
+        let labels = compute_labels_for_alphabet("abcd", 6);
+        assert_eq!(labels, ["a", "b", "c", "da", "db", "dc"]);
+
+        // Typing 'd' should keep "da", "db", "dc" and remove "a", "b", "c"
+        let visible: Vec<&str> = labels
+            .iter()
+            .map(String::as_str)
+            .filter(|l| label_matches_selection(l, "d"))
+            .collect();
+        assert_eq!(visible, ["da", "db", "dc"]);
+    }
+
+    #[test]
+    fn no_labels_match_unknown_prefix() {
+        let labels = ["ai", "fq", "db"];
+        assert!(!labels.iter().any(|l| label_matches_selection(l, "z")));
     }
 }
 
@@ -334,7 +395,7 @@ impl Pane for QuickSelectOverlay {
         Ok(None)
     }
 
-    fn writer(&self) -> MappedMutexGuard<dyn std::io::Write> {
+    fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write> {
         self.delegate.writer()
     }
 
@@ -420,17 +481,21 @@ impl Pane for QuickSelectOverlay {
                 if let Some(result_index) = r.by_label.get(&lowered).cloned() {
                     r.select_and_copy_match_number(result_index, paste);
                     r.close();
+                } else {
+                    r.recompute_results();
                 }
             }
             (KeyCode::Backspace, KeyModifiers::NONE) => {
                 // Backspace to edit the selection
                 let mut r = self.renderer.lock();
                 r.selection.pop();
+                r.recompute_results();
             }
             (KeyCode::Char('u'), KeyModifiers::CTRL) => {
                 // CTRL-u to clear the selection
                 let mut r = self.renderer.lock();
                 r.selection.clear();
+                r.recompute_results();
             }
             _ => {}
         }
@@ -545,14 +610,23 @@ impl Pane for QuickSelectOverlay {
             fn with_lines_mut(&mut self, first_row: StableRowIndex, lines: &mut [&mut Line]) {
                 let mut overlay_lines = vec![];
 
-                let colors = self.renderer.config.resolved_palette.clone();
+                let config = &self.renderer.config;
+                let colors = config.resolved_palette.clone();
+                let disable_attr = config.quick_select_remove_styling;
 
                 // Process the lines; for the search row we want to render instead
                 // the search UI.
                 // For rows with search results, we want to highlight the matching ranges
 
+                let lowered_prefix = self.renderer.selection.to_lowercase();
                 for (idx, line) in lines.iter_mut().enumerate() {
                     let mut line: Line = line.clone();
+                    if disable_attr {
+                        line.cells_mut_for_attr_changes_only()
+                            .iter_mut()
+                            .for_each(|cell| cell.attrs_mut().clear());
+                        line.clear_appdata();
+                    }
                     let stable_idx = idx as StableRowIndex + first_row;
                     self.renderer.dirty_results.remove(stable_idx);
                     if stable_idx == self.search_row {
@@ -577,6 +651,10 @@ impl Pane for QuickSelectOverlay {
                         line.clear_appdata();
                     } else if let Some(matches) = self.renderer.by_line.get(&stable_idx) {
                         for m in matches {
+                            if !label_matches_selection(&m.label, &lowered_prefix) {
+                                // Skip displaying this label, it doesn't match the current filter.
+                                continue;
+                            }
                             // highlight
                             for cell_idx in m.range.clone() {
                                 if let Some(cell) =
@@ -593,7 +671,8 @@ impl Pane for QuickSelectOverlay {
                                                 .quick_select_match_fg
                                                 .unwrap_or(AnsiColor::Green.into()),
                                         )
-                                        .set_reverse(false);
+                                        .set_reverse(false)
+                                        .set_intensity(Intensity::Bold);
                                 }
                             }
                             for (idx, c) in m.label.chars().enumerate() {
@@ -611,7 +690,8 @@ impl Pane for QuickSelectOverlay {
                                         .quick_select_label_fg
                                         .unwrap_or(AnsiColor::Olive.into()),
                                 )
-                                .set_reverse(false);
+                                .set_reverse(false)
+                                .set_intensity(Intensity::Bold);
                                 line.set_cell(m.range.start + idx, Cell::new(c, attr), SEQ_ZERO);
                             }
                         }
@@ -633,12 +713,18 @@ impl Pane for QuickSelectOverlay {
 
         let (top, mut lines) = self.delegate.get_lines(lines);
         let colors = renderer.config.resolved_palette.clone();
+        let disable_attr = renderer.config.quick_select_remove_styling;
 
         // Process the lines; for the search row we want to render instead
         // the search UI.
         // For rows with search results, we want to highlight the matching ranges
         let search_row = renderer.compute_search_row();
         for (idx, line) in lines.iter_mut().enumerate() {
+            if disable_attr {
+                line.cells_mut_for_attr_changes_only()
+                    .iter_mut()
+                    .for_each(|cell| cell.attrs_mut().clear());
+            }
             let stable_idx = idx as StableRowIndex + top;
             renderer.dirty_results.remove(stable_idx);
             if stable_idx == search_row {
@@ -677,7 +763,8 @@ impl Pane for QuickSelectOverlay {
                                         .quick_select_match_fg
                                         .unwrap_or(AnsiColor::Green.into()),
                                 )
-                                .set_reverse(false);
+                                .set_reverse(false)
+                                .set_intensity(Intensity::Bold);
                         }
                     }
                     for (idx, c) in m.label.chars().enumerate() {
@@ -695,7 +782,8 @@ impl Pane for QuickSelectOverlay {
                                 .quick_select_label_fg
                                 .unwrap_or(AnsiColor::Olive.into()),
                         )
-                        .set_reverse(false);
+                        .set_reverse(false)
+                        .set_intensity(Intensity::Bold);
                         line.set_cell(m.range.start + idx, Cell::new(c, attr), SEQ_ZERO);
                     }
                 }
@@ -914,6 +1002,7 @@ impl QuickSelectRenderable {
 
         let pane_id = self.delegate.pane_id();
         let action = self.args.action.clone();
+        let skip_action_on_paste = self.args.skip_action_on_paste;
         self.window
             .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
                 let mux = mux::Mux::get();
@@ -942,7 +1031,9 @@ impl QuickSelectRenderable {
                             let _ = pane.send_paste(&text);
                         }
                         if let Some(action) = action {
-                            let _ = term_window.perform_key_assignment(&pane, &action);
+                            if !paste || !skip_action_on_paste {
+                                let _ = term_window.perform_key_assignment(&pane, &action);
+                            }
                         } else {
                             term_window.copy_to_clipboard(
                                 ClipboardCopyDestination::ClipboardAndPrimarySelection,

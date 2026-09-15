@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+
 use crate::color::LinearRgba;
 use crate::customglyph::{BlockKey, Poly};
 use crate::glyphcache::CachedGlyph;
@@ -274,7 +275,7 @@ impl Element {
             // changed style. Undo that here.
             // There's still an issue where the style does actually change and we
             // subsequently don't clip the element.
-            // <https://github.com/wez/wezterm/issues/2560>
+            // <https://github.com/wezterm/wezterm/issues/2560>
             if let Some(prior) = content.last_mut() {
                 let (fg, bg) = prior_attr.as_ref().unwrap();
                 if cluster.attrs.background() == *bg && cluster.attrs.foreground() == *fg {
@@ -1152,7 +1153,7 @@ impl super::TermWindow {
                 layers,
                 0,
                 euclid::rect(
-                    element.border_rect.max_x() - top_right_width,
+                    element.border_rect.max_x() - top_right_width.max(bottom_right_width),
                     element.border_rect.min_y() + top_right_height,
                     top_right_width.max(bottom_right_width),
                     element.border_rect.height() - (top_right_height + bottom_right_height),

@@ -217,7 +217,7 @@ impl Names {
         // as freetype has a limited set of encodings that it supports.
         // We process the name table for ourselves to increase our chances
         // of returning a good version of the name.
-        // See <https://github.com/wez/wezterm/issues/1761#issuecomment-1079150560>
+        // See <https://github.com/wezterm/wezterm/issues/1761#issuecomment-1079150560>
         // for a case where freetype returns `?????` for a name.
         let names = face.get_sfnt_names();
 
@@ -432,7 +432,7 @@ impl ParsedFont {
         // fontconfig resorts to name matching, so we do too :-/
         let style = match style {
             FontStyle::Normal => {
-                let lower = names.full_name.to_lowercase();
+                let lower = names.full_name.to_ascii_lowercase();
                 if lower.contains("italic") || lower.contains("kursiv") {
                     FontStyle::Italic
                 } else if lower.contains("oblique") {
@@ -442,7 +442,7 @@ impl ParsedFont {
                 }
             }
             FontStyle::Italic => {
-                let lower = names.full_name.to_lowercase();
+                let lower = names.full_name.to_ascii_lowercase();
                 if lower.contains("oblique") {
                     FontStyle::Oblique
                 } else {
@@ -802,7 +802,7 @@ impl ParsedFont {
                 // This heuristic is awful, TBH.
                 if !self.is_built_in_fallback
                     && !attr.is_synthetic
-                    && self.names.full_name.to_lowercase().contains("moji")
+                    && self.names.full_name.to_ascii_lowercase().contains("moji")
                 {
                     self.assume_emoji_presentation = true;
                 }

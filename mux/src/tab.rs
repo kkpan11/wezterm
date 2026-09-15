@@ -535,7 +535,7 @@ impl Tab {
 
     /// Called by the multiplexer client when building a local tab to
     /// mirror a remote tab.  The supplied `root` is the information
-    /// about our counterpart in the the remote server.
+    /// about our counterpart in the remote server.
     /// This method builds a local tree based on the remote tree which
     /// then replaces the local tree structure.
     ///
@@ -1565,7 +1565,7 @@ impl TabInner {
                     // If the pane is no longer known to the mux, then its liveness
                     // state isn't guaranteed to be monitored or updated, so let's
                     // consider the pane effectively dead if it isn't in the mux.
-                    // <https://github.com/wez/wezterm/issues/4030>
+                    // <https://github.com/wezterm/wezterm/issues/4030>
                     let in_mux = mux.get_pane(pane.pane_id()).is_some();
                     let dead = pane.is_dead();
                     log::trace!(
@@ -1923,7 +1923,7 @@ impl TabInner {
         }
 
         // Ensure that we're not zoomed, otherwise we'll end up in
-        // a bogus split state (https://github.com/wez/wezterm/issues/723)
+        // a bogus split state (https://github.com/wezterm/wezterm/issues/723)
         self.set_zoomed(false);
 
         self.iter_panes().iter().nth(pane_index).map(|pos| {
@@ -2279,7 +2279,7 @@ mod test {
         fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
             Ok(None)
         }
-        fn writer(&self) -> MappedMutexGuard<dyn std::io::Write> {
+        fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write> {
             unimplemented!()
         }
         fn resize(&self, size: TerminalSize) -> anyhow::Result<()> {

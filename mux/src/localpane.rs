@@ -31,7 +31,7 @@ use url::Url;
 use wezterm_dynamic::Value;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
-    Alert, AlertHandler, Clipboard, DownloadHandler, KeyCode, KeyModifiers, MouseEvent,
+    Alert, AlertHandler, Clipboard, DownloadHandler, KeyCode, KeyModifiers, MouseEvent, Progress,
     SemanticZone, StableRowIndex, Terminal, TerminalConfiguration, TerminalSize,
 };
 
@@ -172,7 +172,11 @@ impl Pane for LocalPane {
     }
 
     fn get_keyboard_encoding(&self) -> KeyboardEncoding {
-        self.terminal.lock().get_keyboard_encoding()
+        if self.tmux_domain.lock().is_some() {
+            KeyboardEncoding::Xterm
+        } else {
+            self.terminal.lock().get_keyboard_encoding()
+        }
     }
 
     fn get_current_seqno(&self) -> SequenceNo {
@@ -262,7 +266,7 @@ impl Pane for LocalPane {
         let mut proc = self.process.lock();
 
         const EXIT_BEHAVIOR: &str = "This message is shown because \
-            \x1b]8;;https://wezfurlong.org/wezterm/\
+            \x1b]8;;https://wezterm.org/\
             config/lua/config/exit_behavior.html\
             \x1b\\exit_behavior\x1b]8;;\x1b\\";
 
@@ -395,7 +399,7 @@ impl Pane for LocalPane {
     fn key_down(&self, key: KeyCode, mods: KeyModifiers) -> Result<(), Error> {
         Mux::get().record_input_for_current_identity();
         if self.tmux_domain.lock().is_some() {
-            log::error!("key: {:?}", key);
+            log::trace!("key: {:?}", key);
             if key == KeyCode::Char('q') {
                 self.terminal.lock().send_paste("detach\n")?;
             }
@@ -421,7 +425,7 @@ impl Pane for LocalPane {
         Ok(())
     }
 
-    fn writer(&self) -> MappedMutexGuard<dyn std::io::Write> {
+    fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write> {
         Mux::get().record_input_for_current_identity();
         MutexGuard::map(self.writer.lock(), |writer| {
             let w: &mut dyn std::io::Write = writer;
@@ -456,6 +460,10 @@ impl Pane for LocalPane {
         }
 
         title
+    }
+
+    fn get_progress(&self) -> Progress {
+        self.terminal.lock().get_progress()
     }
 
     fn palette(&self) -> ColorPalette {
@@ -656,6 +664,14 @@ impl Pane for LocalPane {
                 // normalize the case so we match everything lowercase
                 CompiledPattern::CaseInSensitiveString(s.to_lowercase())
             }
+            Pattern::CaseSmartString(s) => {
+                if s.chars().any(|c| c.is_uppercase()) {
+                    CompiledPattern::CaseSensitiveString(s)
+                } else {
+                    // normalize the case so we match everything lowercase
+                    CompiledPattern::CaseInSensitiveString(s.to_lowercase())
+                }
+            }
             Pattern::Regex(r) => CompiledPattern::Regex(Regex::new(&r)?),
         };
 
@@ -713,23 +729,33 @@ impl Pane for LocalPane {
                 CompiledPattern::Regex(re) => {
                     // Allow for the regex to contain captures
                     for capture_res in re.captures_iter(&haystack) {
-                        if let Ok(c) = capture_res {
-                            // Look for the captures in reverse order, as index==0 is
-                            // the whole matched string.  We can't just call
-                            // `c.iter().rev()` as the capture iterator isn't double-ended.
-                            for idx in (0..c.len()).rev() {
-                                if let Some(m) = c.get(idx) {
-                                    found_match(
-                                        m.as_str(),
-                                        m.start(),
-                                        lines,
-                                        stable_idx,
-                                        &mut uniq_matches,
-                                        &mut coords,
-                                        &mut results,
-                                    );
-                                    break;
+                        match capture_res {
+                            Ok(c) => {
+                                // Look for the captures in reverse order, as index==0 is
+                                // the whole matched string.  We can't just call
+                                // `c.iter().rev()` as the capture iterator isn't double-ended.
+                                for idx in (0..c.len()).rev() {
+                                    if let Some(m) = c.get(idx) {
+                                        found_match(
+                                            m.as_str(),
+                                            m.start(),
+                                            lines,
+                                            stable_idx,
+                                            &mut uniq_matches,
+                                            &mut coords,
+                                            &mut results,
+                                        );
+                                        break;
+                                    }
                                 }
+                            }
+                            Err(err) => {
+                                // On errors like max backtracking limit reached, fancy_regex does
+                                // NOT advance the iterator position, so silently ignoring Err
+                                // would loop forever.
+                                log::warn!("line {stable_idx} search error: {err}");
+                                log::warn!("stopping collecting matches on line {stable_idx}");
+                                break;
                             }
                         }
                     }
@@ -1045,24 +1071,24 @@ impl LocalPane {
         {
             let leader = self.get_leader(policy);
             if let Some(path) = &leader.current_working_dir {
-                return Url::parse(&format!("file://localhost{}", path.display())).ok();
+                return Url::from_directory_path(path).ok();
             }
             return None;
         }
 
         #[cfg(windows)]
         if let Some(fg) = self.divine_foreground_process(policy) {
-            // Since windows paths typically start with something like C:\,
-            // we cannot simply stick `localhost` on the front; we have to
-            // omit the hostname otherwise the url parser is unhappy.
-            return Url::parse(&format!("file://{}", fg.cwd.display())).ok();
+            return Url::from_directory_path(fg.cwd).ok();
         }
 
         #[allow(unreachable_code)]
         None
     }
 
-    fn divine_process_list(&self, policy: CachePolicy) -> Option<MappedMutexGuard<CachedProcInfo>> {
+    fn divine_process_list(
+        &self,
+        policy: CachePolicy,
+    ) -> Option<MappedMutexGuard<'_, CachedProcInfo>> {
         if let ProcessState::Running { pid: Some(pid), .. } = &*self.process.lock() {
             let mut proc_list = self.proc_list.lock();
 
@@ -1129,7 +1155,7 @@ impl LocalPane {
 impl Drop for LocalPane {
     fn drop(&mut self) {
         // Avoid lingering zombies if we can, but don't block forever.
-        // <https://github.com/wez/wezterm/issues/558>
+        // <https://github.com/wezterm/wezterm/issues/558>
         if let ProcessState::Running { signaller, .. } = &mut *self.process.lock() {
             let _ = signaller.kill();
         }

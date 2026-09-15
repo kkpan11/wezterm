@@ -3,7 +3,7 @@
 {{since('20220624-141144-bd1b7c5d')}}
 
 This action activates the pane selection modal display. In this mode, each pane
-will be overlayed with a one- or two-character label taken from the selection
+will be overlaid with a one- or two-character label taken from the selection
 alphabet.
 
 ![Pane Select](../../../screenshots/pane-select.png)
@@ -41,7 +41,7 @@ local wezterm = require 'wezterm'
 local act = wezterm.action
 
 -- 36 is the default, but you can choose a different size.
--- Uses the same font as window_frame.font
+-- Uses the same font as window_frame.font if pane_select_font option is not set
 -- config.pane_select_font_size=36,
 
 config.keys = {

@@ -1,5 +1,3 @@
-#![macro_use]
-
 pub use mlua;
 use mlua::{IntoLua, Value as LuaValue};
 use std::cell::RefCell;
@@ -63,7 +61,7 @@ macro_rules! impl_lua_conversion_dynamic {
 pub fn dynamic_to_lua_value<'lua>(
     lua: &'lua mlua::Lua,
     value: DynValue,
-) -> mlua::Result<mlua::Value> {
+) -> mlua::Result<mlua::Value<'lua>> {
     Ok(match value {
         DynValue::Null => LuaValue::Nil,
         DynValue::Bool(b) => LuaValue::Boolean(b),

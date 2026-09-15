@@ -62,7 +62,7 @@ impl Drop for OwnedHandle {
 }
 
 impl std::os::fd::AsFd for OwnedHandle {
-    fn as_fd(&self) -> std::os::fd::BorrowedFd {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
         unsafe { std::os::fd::BorrowedFd::borrow_raw(self.handle) }
     }
 }
@@ -231,7 +231,7 @@ impl std::io::Write for FileDescriptor {
 }
 
 impl std::os::fd::AsFd for FileDescriptor {
-    fn as_fd(&self) -> std::os::fd::BorrowedFd {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
         self.handle.as_fd()
     }
 }
@@ -263,6 +263,12 @@ impl FileDescriptor {
         let fd = duped.into_raw_fd();
         let stdio = unsafe { std::process::Stdio::from_raw_fd(fd) };
         Ok(stdio)
+    }
+
+    #[inline]
+    pub(crate) fn into_stdio_impl(self) -> std::process::Stdio {
+        let fd = self.into_raw_fd();
+        unsafe { std::process::Stdio::from_raw_fd(fd) }
     }
 
     #[inline]
@@ -320,7 +326,11 @@ impl FileDescriptor {
         };
 
         let std_original = FileDescriptor::dup(&std_descriptor)?;
-        unsafe { FileDescriptor::dup2(f, std_descriptor) }?.into_raw_fd();
+        // Assign f into std_descriptor, then convert to an fd so that
+        // we don't close it when the returned FileDescriptor is dropped.
+        // Then we discard/ignore the fd because it is nominally owned by
+        // the stdio machinery for the process
+        let _ = unsafe { FileDescriptor::dup2(f, std_descriptor) }?.into_raw_fd();
         Self::no_cloexec(std_descriptor)?;
 
         Ok(std_original)

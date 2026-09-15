@@ -8,6 +8,7 @@
 //! client and server instances that are built from different versions
 //! of this code; in this way the client and server can more gracefully
 //! manage unknown enum variants.
+
 #![allow(dead_code)]
 #![allow(clippy::range_plus_one)]
 
@@ -441,7 +442,7 @@ macro_rules! pdu {
 /// The overall version of the codec.
 /// This must be bumped when backwards incompatible changes
 /// are made to the types and protocol.
-pub const CODEC_VERSION: usize = 43;
+pub const CODEC_VERSION: usize = 45;
 
 // Defines the Pdu enum.
 // Each struct has an explicit identifying number.

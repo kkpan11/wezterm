@@ -1,6 +1,10 @@
 //! Types for representing Rust types in a more dynamic form
 //! that is similar to JSON or Lua values.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 mod array;
 mod drop;
 mod error;

@@ -4,7 +4,7 @@
 
 This event is emitted when the [Command Palette](../keyassignment/ActivateCommandPalette.md) is shown.
 
-It's purpose is to enable you to add additional entries to the list of commands
+Its purpose is to enable you to add additional entries to the list of commands
 shown in the palette.
 
 This hook is synchronous; calling asynchronous functions will not succeed.
@@ -39,6 +39,7 @@ wezterm.on('augment-command-palette', function(window, pane)
 
       action = act.PromptInputLine {
         description = 'Enter new name for tab',
+        initial_value = 'My Tab Name',
         action = wezterm.action_callback(function(window, pane, line)
           if line then
             window:active_tab():set_title(line)

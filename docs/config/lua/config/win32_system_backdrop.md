@@ -7,8 +7,8 @@ tags:
 
 {{since('20230712-072601-f4abf8fd')}}
 
-When combined with `window_background_opacity`, chooses from available
-window background effects provided by Windows.
+When combined with [window_background_opacity](window_background_opacity.md),
+chooses from available window background effects provided by Windows.
 
 The possible values for `win32_system_backdrop` are:
 
@@ -31,6 +31,9 @@ for the backdrop effect to work.  For best results with both `"Mica"` and
 
 See also [macos_window_background_blur](macos_window_background_blur.md) for
 a similar effect on macOS.
+
+See also [wayland_window_background_blur](wayland_window_background_blur.md) for a similar
+effect on Linux Wayland.
 
 ## Acrylic
 

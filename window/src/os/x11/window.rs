@@ -3,7 +3,7 @@ use crate::bitmaps::*;
 use crate::connection::ConnectionOps;
 use crate::os::{xkeysyms, Connection, Window};
 use crate::{
-    Appearance, Clipboard, DeadKeyStatus, Dimensions, MouseButtons, MouseCursor, MouseEvent,
+    Appearance, Clipboard, CursorIcon, DeadKeyStatus, Dimensions, MouseButtons, MouseEvent,
     MouseEventKind, MousePress, Point, Rect, RequestedWindowGeometry, ResizeIncrement,
     ResolvedGeometry, ScreenPoint, ScreenRect, WindowDecorations, WindowEvent, WindowEventSender,
     WindowOps, WindowState,
@@ -235,7 +235,7 @@ impl XWindowInner {
         Ok(())
     }
 
-    fn set_cursor(&mut self, cursor: Option<MouseCursor>) -> anyhow::Result<()> {
+    fn set_cursor(&mut self, cursor: Option<CursorIcon>) -> anyhow::Result<()> {
         self.cursors.set_cursor(self.window_id, cursor)
     }
 
@@ -568,7 +568,7 @@ impl XWindowInner {
         use xcb::XidNew;
         let conn = self.conn();
         let msgtype_name = conn.atom_name(msgtype);
-        let srcwin = unsafe { xcb::x::Window::new(data[0]) };
+        let srcwin = xcb::x::Window::new(data[0]);
         if msgtype == conn.atom_xdndenter {
             self.drag_and_drop.src_window = Some(srcwin);
             let moretypes = data[1] & 0x01 != 0;
@@ -578,7 +578,7 @@ impl XWindowInner {
                 self.drag_and_drop.src_types = data[2..]
                     .into_iter()
                     .filter(|&&x| x != 0)
-                    .map(|&x| unsafe { Atom::new(x) })
+                    .map(|&x| Atom::new(x))
                     .collect();
             } else {
                 self.drag_and_drop.src_types =
@@ -623,7 +623,7 @@ impl XWindowInner {
         } else if msgtype == conn.atom_xdndposition {
             self.drag_and_drop.time = data[3];
             let (x, y) = (data[2] >> 16 as u16, data[2] as u16);
-            self.drag_and_drop.src_action = unsafe { Atom::new(data[4]) };
+            self.drag_and_drop.src_action = Atom::new(data[4]);
             self.drag_and_drop.target_action = conn.atom_xdndactioncopy;
             log::trace!(
                 "ClientMessage {msgtype_name}, ({x}, {y}), timestamp: {}, action: {}",
@@ -778,7 +778,7 @@ impl XWindowInner {
                     }
                 } else if msg.r#type() == conn.atom_protocols {
                     if let ClientMessageData::Data32(data) = msg.data() {
-                        let protocol_atom = unsafe { Atom::new(data[0]) };
+                        let protocol_atom = Atom::new(data[0]);
                         log::trace!(
                             "ClientMessage {type_atom_name}/{}",
                             conn.atom_name(protocol_atom)
@@ -804,7 +804,7 @@ impl XWindowInner {
             Event::X(xcb::x::Event::SelectionRequest(e)) => {
                 if let Err(err) = self.selection_request(e) {
                     // Don't propagate this, as it is not worth exiting the program over it.
-                    // <https://github.com/wez/wezterm/pull/6135>
+                    // <https://github.com/wezterm/wezterm/pull/6135>
                     log::error!("Error handling SelectionRequest: {err:#}");
                 }
             }
@@ -896,7 +896,7 @@ impl XWindowInner {
         // Since we just composed, synthesize a cleared status, as we
         // are not guaranteed to receive an event notification to
         // trigger dispatch_ime_compose_status() above.
-        // <https://github.com/wez/wezterm/issues/4841>
+        // <https://github.com/wezterm/wezterm/issues/4841>
         self.events
             .dispatch(WindowEvent::AdviseDeadKeyStatus(DeadKeyStatus::None));
     }
@@ -926,7 +926,12 @@ impl XWindowInner {
             conn.send_request_no_reply(&xcb::x::SetSelectionOwner {
                 owner: xcb::x::Window::none(),
                 selection,
-                time: self.copy_and_paste.time,
+                // We use CURRENT_TIME rather than self.copy_and_paste.time here, because that field
+                // only advances on key/button events on *this* window, so for a window that hasn't
+                // been interacted with recently it lags behind the selection's lastTimeChanged.
+                // The X server ignores SetSelectionOwner with time before lastTimeChanged, so
+                // clipboard updates without explicit interaction (OSC 52) would never be accepted.
+                time: xcb::x::CURRENT_TIME,
             })?;
         } else if we_own_it {
             log::trace!(
@@ -937,7 +942,8 @@ impl XWindowInner {
             conn.send_request_no_reply(&xcb::x::SetSelectionOwner {
                 owner: self.window_id,
                 selection,
-                time: self.copy_and_paste.time,
+                // See note about CURRENT_TIME in the other branch above.
+                time: xcb::x::CURRENT_TIME,
             })?;
         } else {
             log::trace!(
@@ -1557,7 +1563,7 @@ impl XWindow {
         // Before we map the window, flush to ensure that all of the other properties
         // have been applied to it.
         // This is a speculative fix for this race condition issue:
-        // <https://github.com/wez/wezterm/issues/2155>
+        // <https://github.com/wezterm/wezterm/issues/2155>
         conn.flush().context("flushing before mapping window")?;
         window_handle.show();
 
@@ -1616,7 +1622,7 @@ impl XWindowInner {
         // should give whatever stuff is still referencing the window
         // to finish and avoid triggering a protocol error.
         // I don't really like this as a solution :-/
-        // <https://github.com/wez/wezterm/issues/2198>
+        // <https://github.com/wezterm/wezterm/issues/2198>
         let window = self.window_id;
         promise::spawn::spawn(async move {
             async_io::Timer::after(std::time::Duration::from_secs(2)).await;
@@ -1854,7 +1860,7 @@ impl XWindowInner {
         // https://specifications.freedesktop.org/wm-spec/wm-spec-1.3.html#idm44927025355360
         // says that this is an array of 32bit ARGB data.
         // The first two elements are width, height, with the remainder
-        // being the the row data, left-to-right, top-to-bottom.
+        // being the row data, left-to-right, top-to-bottom.
         let mut icon_data = Vec::with_capacity((2 + (width * height)) * 4);
         icon_data.push(width as u32);
         icon_data.push(height as u32);
@@ -2028,7 +2034,7 @@ impl WindowOps for XWindow {
         });
     }
 
-    fn set_cursor(&self, cursor: Option<MouseCursor>) {
+    fn set_cursor(&self, cursor: Option<CursorIcon>) {
         XConnection::with_window_inner(self.0, move |inner| {
             let _ = inner.set_cursor(cursor);
             Ok(())
@@ -2126,7 +2132,7 @@ impl WindowOps for XWindow {
             // where we don't receive a SELECTION_NOTIFY in time to correctly
             // invalidate that state, so we always ask the X server to for
             // the selection, even if it is a little slower.
-            // <https://github.com/wez/wezterm/issues/2110>
+            // <https://github.com/wezterm/wezterm/issues/2110>
             let promise = promise.take().unwrap();
             log::debug!(
                 "SEL: window_id={window_id:?} Window::get_clipboard: \

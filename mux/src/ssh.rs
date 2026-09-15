@@ -253,7 +253,7 @@ impl RemoteSshDomain {
         let config = config::configuration();
         let cmd = match command {
             Some(mut cmd) => {
-                config.apply_cmd_defaults(&mut cmd, None);
+                config.apply_cmd_defaults(&mut cmd, self.dom.default_prog.as_ref(), None);
                 cmd
             }
             None => config.build_prog(None, self.dom.default_prog.as_ref(), None)?,
@@ -973,8 +973,8 @@ impl ChildKiller for WrappedSshChildKiller {
     }
 }
 
-type BoxedReader = Box<(dyn Read + Send + 'static)>;
-type BoxedWriter = Box<(dyn Write + Send + 'static)>;
+type BoxedReader = Box<dyn Read + Send + 'static>;
+type BoxedWriter = Box<dyn Write + Send + 'static>;
 
 pub(crate) struct WrappedSshPty {
     inner: RefCell<WrappedSshPtyInner>,
@@ -1071,7 +1071,7 @@ impl portable_pty::MasterPty for WrappedSshPty {
         }
     }
 
-    fn try_clone_reader(&self) -> anyhow::Result<Box<(dyn Read + Send + 'static)>> {
+    fn try_clone_reader(&self) -> anyhow::Result<Box<dyn Read + Send + 'static>> {
         let mut inner = self.inner.borrow_mut();
         inner.check_connected()?;
         match &mut *inner {
@@ -1083,7 +1083,7 @@ impl portable_pty::MasterPty for WrappedSshPty {
         }
     }
 
-    fn take_writer(&self) -> anyhow::Result<Box<(dyn Write + Send + 'static)>> {
+    fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send + 'static>> {
         anyhow::bail!("writer must be created during bootstrap");
     }
 
@@ -1111,7 +1111,7 @@ impl std::io::Write for PtyWriter {
         // will let us successfully write a byte to a disconnected
         // socket and we won't discover the issue until we write
         // the next byte.
-        // <https://github.com/wez/wezterm/issues/771>
+        // <https://github.com/wezterm/wezterm/issues/771>
         if let Ok(writer) = self.rx.try_recv() {
             self.writer = writer;
         }
